@@ -1,0 +1,87 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r setup}
+library(tidyverse)
+library(readr)
+library(magrittr)
+library(data.table)
+library(dtplyr)
+library(feather)
+```
+
+```{r}
+data_dir <- "../data/"
+t_dir <- paste0(data_dir, "Transactions/")
+t_files <- dir(t_dir)
+
+lookup_dir <- paste0(
+  data_dir,
+  "Lookups/")
+
+lookup_data <- list()
+lookup_files <- dir(lookup_dir)
+```
+
+```{r}
+# t_files %>%
+#   map_df(~fread(
+#     file = paste0(t_dir, .))) -> 
+#   transactions
+# 
+# datathon_db <- src_sqlite(paste0(data_dir, "/datathon.sqlite3"), create = TRUE)
+# 
+# copy_to(
+#   datathon_db,
+#   transactions,
+#   temporary = FALSE,
+#   indexes = list(
+#     "Patient_ID",
+#     "Store_ID",
+#     "Drug_ID",
+#     "Prescription_Week",
+#     "Dispense_Week",
+#     "Drug_Code",
+#     "NHS_Code"))
+# 
+# lookup_files %>% 
+#   map(~fread(
+#     file = paste0(lookup_dir, .)
+#   )) %>% 
+#   set_names(c("atc", "chronic_illnesses", "drugs", "patients", "stores")) ->
+#   lookups
+# 
+# 
+# lookups %>% 
+#   map2(.y = names(.), ~copy_to(
+#     dest = datathon_db,
+#     df = .,
+#     name = .y,
+#     temporary = FALSE
+#   ))
+```
+
+```{r}
+db <- src_sqlite(paste0(data_dir, "/datathon.sqlite3"))
+```
+
+```{r}
+db %>% 
+  src_tbls %>% 
+  as_tibble %>% 
+  filter(value != "sqlite_stat1") -> 
+  db_tables
+
+db_tables %>% 
+  t %>% 
+  as.list %>% 
+  map(~tbl(db, .)) %>% 
+  set_names(db_tables %>% as_vector) -> 
+  L
+
+
+
+```
+
