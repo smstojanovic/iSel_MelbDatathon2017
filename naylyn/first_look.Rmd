@@ -11,6 +11,7 @@ library(data.table)
 library(dtplyr)
 library(feather)
 library(lubridate)
+library(stringr)
 ```
 
 
@@ -37,30 +38,83 @@ lookup_files <- dir(lookup_dir)
 # 
 # fwrite(transactions, file = "../data/transactions_consolidated.csv", sep = ";")
 # 
-lookup_files %>%
-  map(~fread(
-    file = paste0(lookup_dir, .)
-  )) %>%
-  walk2(.y = list("atc", "chronic_illnesses", "drugs", "patients", "stores"), ~assign(x = .y, value = .x))
+# lookup_files %>%
+#   map(~fread(
+#     file = paste0(lookup_dir, .)
+#   )) %>%
+#   walk2(.y = list("atc", "chronic_illnesses", "drugs", "patients", "stores"),
+#         ~assign(x = .y, value = .x, envir = .GlobalEnv))
 ```
 
 ```{r}
-transactions <- read_feather("../data/transactions.feather")
+# transactions <- read_feather("../data/transactions.feather")
+# transactions <- read_feather("../data/transactions_sample.feather")
 ```
 
 ```{r}
-lookups %>%
-  map(as.data.table) -> 
-  lookups
+db <- src_postgres(dbname = "datathon")
+db_tables <- src_tbls(db)
 
-setDT(transactions)
+db_tables %>% 
+  walk(~assign(., tbl(db, .), envir = .GlobalEnv))
+```
 
-transactions %>% 
-  sample_frac(0.1) %>% 
-  left_join(lookups$drugs %>% 
-              rename(Drug_Code = MasterProductCode), 
-            by = "Drug_Code") %>% 
-  left_join(lookups$atc,
-            by = "ATCLevel5Code") -> 
-  tmp
+```{r}
+atc_local <- atc %>% collect
+drugs_local <- drugs %>% collect
+```
+
+```{r}
+any_matching <- function(v, x) {
+  map(x, ~str_detect(tolower(v), .)) %>% 
+    reduce(`|`) %>% 
+    return()
+}
+
+atc_local %>% 
+  gather(key, value, -ATCLevel5Code, -ATCLevel5Name) %>% 
+  filter(value %>%
+           any_matching(c("bacteria", "biotic"))
+         ) %>% 
+  distinct(ATCLevel5Code) %>% 
+  inner_join(atc_local) %>% 
+  filter(
+    ATCLevel2Name != "ANTIVIRALS FOR SYSTEMIC USE",
+    ATCLevel2Name != "VACCINES"
+  ) -> 
+  atc_antibiotics
+
+```
+
+
+```{r}
+# transactions %>% 
+#   left_join(drugs, 
+#             by = c("Drug_Code" = "MasterProductCode")) %>%
+#   left_join(atc) %>% 
+#   semi_join(atc_antibiotics, copy = TRUE) %>% 
+#   collect(n = Inf) -> 
+#   antibiotic_transactions
+antibiotic_transactions <- read_feather("../data/antibiotic_transactions.feather")
+```
+
+```{r}
+antibiotic_transactions %>% 
+  count(ATCLevel5Name) %>% 
+  View
+```
+
+```{r}
+antibiotic_transactions %>% 
+  count(Patient_ID) %>%
+  count(n) %>%
+  View
+```
+
+```{r}
+antibiotic_transactions %>% 
+  count(Prescriber_ID) %>% 
+  count(n) %>% 
+  View
+```
 
