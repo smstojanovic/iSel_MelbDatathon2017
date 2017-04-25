@@ -1,0 +1,44 @@
+---
+title: "map plotting"
+author: "A&DS"
+date: "23 April 2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(maptools)
+
+```
+
+```{r}
+poa_shp <- readShapeSpatial("../data/map/POA_2016_AUST.shp", delete_null_obj = TRUE)
+
+plot(poa_shp)
+
+extract_postcode_df <- function(x){
+  coords <- x@polygons %>% 
+    map_df(~tibble(x = .@labpt[1], y = .@labpt[2]))
+  
+  labels <- tibble(
+    postcode = x@data$POA_NAME16
+  )
+  
+  return(
+    bind_cols(
+      labels,
+      coords
+    )
+  )
+}
+
+postcodes <- extract_postcode_df(poa_shp)
+
+```
+
+```{r}
+postcodes %>% 
+  filter(str_detect(postcode, "^3")) %>% 
+  ggplot(aes(x = x, y = y)) +
+  geom_point()
+```
+
