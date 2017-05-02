@@ -23,6 +23,7 @@ library(RcppRoll)
 library(viridis)
 library(broom)
 library(plotly)
+library(fuzzyjoin)
 ```
 
 ```{r}
@@ -44,6 +45,24 @@ transactions %>%
 ```
 
 ```{r}
+transactions %>% 
+  left_join(drugs, by = c("Drug_Code" = "MasterProductCode")) %>% 
+  left_join(atc) %>% 
+  count(ATCLevel1Name,
+        ATCLevel2Name,
+        ATCLevel3Name,
+        ATCLevel4Name,
+        ATCLevel5Name) %>% 
+  collect(n = Inf) -> 
+  all_atc_transactions
+
+all_atc_transactions %>%
+  group_by(ATCLevel1Name) %>% 
+  summarise_at("n", sum) %>% View
+```
+
+
+```{r}
 prescriptions_per_prescriber %>%
   filter(n > 500) %>% 
   rename(p = n) -> 
@@ -56,6 +75,13 @@ antibiotic_transactions <- read_feather("../data/antibiotic_transactions.feather
 
 ```{r}
 antibiotic_transactions %>% 
+  count(ATCLevel2Name)
+```
+
+
+```{r}
+antibiotic_transactions %>% 
+  filter(ATCLevel1Code == "J") %>% 
   count(Prescriber_ID) %>% 
   rename(ab_p = n) -> 
   ab_prescribers
@@ -64,23 +90,89 @@ antibiotic_transactions %>%
 ```{r}
 top_prescribers %>% 
   inner_join(ab_prescribers, by = "Prescriber_ID") %>% 
-  mutate(frac_ab = ab_p / p) %>%
-  mutate_at("frac_ab", log10) %>% 
+  mutate(frac_ab = ab_p / p) -> 
+  prescriber_summary
+
+prescriber_summary %>%
+  # mutate_at("frac_ab", log10) %>% 
   .$frac_ab %>% 
-  density(n = 512) %>% 
+  density(n = 2^13) %>% 
   tidy -> 
-  tmp
+  antibiotic_density
 
-tmp %>% 
-  mutate(x = 10^x) %>% 
-  mutate(p_int = 0.5 * {lead(x) - x} * {lead(y) * y},
-         y_int = cumsum(p_int)) %>% 
-  ggplot(aes(x = x, y = y_int)) +
-  geom_line() -> 
-  a_plot
-
+antibiotic_density %>% 
+  ggplot(aes(x = x, y = y)) +
+  geom_line() +
   scale_x_log10(
    breaks = scales::trans_breaks("log10", function(x) 10^x),
    labels = scales::trans_format("log10", scales::math_format(10^.x))
- )
+ ) +
+  scale_y_continuous(labels = NULL) +
+  theme(axis.ticks.y = element_blank()) +
+  labs(
+    x = "Antibiotic Prescription Fraction",
+    y = "Empirical Density"
+  )
 ```
+
+```{r}
+get_percentiles <- function(v){
+  probs <- seq(0, 1, 0.02)
+  v %>% 
+    quantile(probs = probs, names = FALSE) %>% 
+    as_tibble() %>% 
+    rename(
+      cutoff_upper = value
+    ) %>% 
+    mutate(percentile = probs * 100,
+           cutoff_lower = lag(cutoff_upper)) %>% 
+    replace_na(list(cutoff_lower = -Inf,
+                    cutoff_upper = Inf)) %>% 
+  return()
+}
+prescriber_summary$frac_ab %>% 
+  get_percentiles -> 
+  frac_ab_percentiles
+```
+
+```{r}
+antibiotic_density %>% 
+  mutate(dummy = TRUE) %>% 
+  left_join(frac_ab_percentiles %>% 
+              mutate(dummy = TRUE)) %>% 
+  select(-dummy) %>% 
+  filter(x %>% between(cutoff_lower, cutoff_upper)) %>% 
+  ggplot(aes(x = x, y = y)) +
+  geom_rect(
+    aes(
+      xmin = cutoff_lower,
+      xmax = cutoff_upper,
+      ymin = -Inf,
+      ymax = Inf,
+      fill = percentile
+  )) +
+  geom_line() +
+  scale_x_log10(
+    breaks = scales::trans_breaks("log10", function(x) 10^x),
+    labels = scales::trans_format("log10", scales::math_format(10^.x))
+  ) +
+  scale_y_continuous(labels = NULL) +
+  theme(axis.ticks.y = element_blank()) +
+  labs(
+    x = "Antibiotic Prescription Fraction",
+    y = "Empirical Density"
+  ) +
+  theme(axis.line = element_line(colour = "black"),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.border = element_blank(),
+    panel.background = element_blank()) +
+  scale_fill_distiller(palette = "RdYlGn")
+```
+
+```{r}
+antibiotic_transactions %>% 
+  filter(ATCLevel1Code == "J") %>% 
+  mutate(is_winter_prescription)
+```
+
