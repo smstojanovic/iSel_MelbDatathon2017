@@ -1,0 +1,86 @@
+---
+title: "data story"
+author: "A&DS"
+date: "2 May 2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tidyverse)
+# library(dbplyr)
+library(readr)
+library(magrittr)
+library(data.table)
+library(dtplyr)
+library(feather)
+library(lubridate)
+library(stringr)
+library(DBI)
+library(RPostgreSQL)
+library(RcppRoll)
+library(viridis)
+library(broom)
+library(plotly)
+```
+
+```{r}
+db <- DBI::dbConnect(RPostgreSQL::PostgreSQL(), dbname = "datathon")
+db <- src_postgres(dbname = "datathon")
+# db_src <- src_dbi(db)
+db_tables <- src_tbls(db)
+
+db_tables %>% 
+  walk(~assign(., tbl(db, .), envir = .GlobalEnv))
+```
+
+```{r}
+transactions %>% 
+  count(Prescriber_ID) %>% 
+  collect(n = Inf) %>% 
+  filter(!Prescriber_ID %in% c("0", "-9999")) -> 
+  prescriptions_per_prescriber
+```
+
+```{r}
+prescriptions_per_prescriber %>%
+  filter(n > 500) %>% 
+  rename(p = n) -> 
+  top_prescribers
+```
+
+```{r}
+antibiotic_transactions <- read_feather("../data/antibiotic_transactions.feather")
+```
+
+```{r}
+antibiotic_transactions %>% 
+  count(Prescriber_ID) %>% 
+  rename(ab_p = n) -> 
+  ab_prescribers
+```
+
+```{r}
+top_prescribers %>% 
+  inner_join(ab_prescribers, by = "Prescriber_ID") %>% 
+  mutate(frac_ab = ab_p / p) %>%
+  mutate_at("frac_ab", log10) %>% 
+  .$frac_ab %>% 
+  density(n = 512) %>% 
+  tidy -> 
+  tmp
+
+tmp %>% 
+  mutate(x = 10^x) %>% 
+  mutate(p_int = 0.5 * {lead(x) - x} * {lead(y) * y},
+         y_int = cumsum(p_int)) %>% 
+  ggplot(aes(x = x, y = y_int)) +
+  geom_line() -> 
+  a_plot
+
+  scale_x_log10(
+   breaks = scales::trans_breaks("log10", function(x) 10^x),
+   labels = scales::trans_format("log10", scales::math_format(10^.x))
+ )
+```

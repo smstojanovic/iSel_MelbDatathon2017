@@ -205,37 +205,6 @@ top_antibiotic_transactions %>%
   ggplot(aes(x = prescription_week, y = rn, colour = atc_level_3_name)) +
   geom_line()
 ```
-```{r}
-tat %>%
-  count(prescription_week) %>% 
-  ungroup %>% 
-  arrange(prescription_week) %>% 
-  mutate(pwdiff = prescription_week - lag(prescription_week)) %>% 
-  View
-```
-
-
-```{r}
-tat %>% 
-  count(RepeatsLeft_Qty, atc3) %>% 
-  View
-```
-
-```{r}
-tat %>% 
-  select(Patient_ID,
-         Prescriber_ID,
-         prescription_week,
-         dispense_week,
-         RepeatsTotal_Qty,
-         Dispensed_Qty,
-         RepeatsLeft_Qty,
-         atc3,
-         ATCLevel5Name) %>% 
-  arrange(Patient_ID, prescription_week, dispense_week) %>% 
-  View
-  
-```
 
 ```{r}
 tat %>% 
@@ -274,15 +243,6 @@ tat %>%
   count(atc_level_3_name, NHS_Code, RepeatsTotal_Qty) -> 
   repeat_numbers
 ```
-```{r}
-repeat_numbers %>% 
-  filter(RepeatsTotal_Qty <= 10) %>% 
-  group_by(NHS_Code) %>% 
-  mutate(frac = n / sum(n)) %>% 
-  ggplot(aes(y = NHS_Code, x = RepeatsTotal_Qty, fill = frac)) +
-  geom_tile() +
-  scale_x_discrete()
-```
 
 ```{r}
 tat %>% 
@@ -315,16 +275,6 @@ tat %>%
 
 ```{r}
 tat %>% 
-  count(Prescriber_ID, ATCLevel5Name) %>% 
-  ungroup %>% 
-  filter(n < 25) %>% 
-  ggplot(aes(x = n, colour = ATCLevel5Name)) +
-  geom_density()
-```
-
-
-```{r}
-tat %>% 
   filter(dispense_week %>% 
            between(
              ymd("2011-01-01"),
@@ -352,6 +302,5 @@ tat %>%
   ungroup %>% 
   count(n) %>% 
   View
-
 ```
 
