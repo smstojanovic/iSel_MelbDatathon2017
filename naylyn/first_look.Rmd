@@ -5,6 +5,7 @@ output: html_document
 
 ```{r setup}
 library(tidyverse)
+# library(dbplyr)
 library(readr)
 library(magrittr)
 library(data.table)
@@ -12,6 +13,10 @@ library(dtplyr)
 library(feather)
 library(lubridate)
 library(stringr)
+library(DBI)
+library(RPostgreSQL)
+library(RcppRoll)
+library(viridis)
 ```
 
 
@@ -19,6 +24,9 @@ library(stringr)
 data_dir <- "../data/"
 t_dir <- paste0(data_dir, "Transactions/")
 t_files <- dir(t_dir)
+
+missing_dir <- paste0(data_dir, "MISSING_TRANSACTIONS/")
+missing_files <- dir(missing_dir)
 
 lookup_dir <- paste0(
   data_dir,
@@ -36,8 +44,20 @@ lookup_files <- dir(lookup_dir)
 #     file = paste0(t_dir, .))) ->
 #   transactions
 # 
-# fwrite(transactions, file = "../data/transactions_consolidated.csv", sep = ";")
+# missing_files %>%
+#   map_df(~fread(
+#     file = paste0(missing_dir, .))) ->
+#   missing_transactions
 # 
+# missing_transactions %>% 
+#   mutate(IsDeferredScript = as.numeric(IsDeferredScript)) -> 
+#   missing_transactions
+# 
+# fwrite(
+#   missing_transactions,
+#   file = "../data/missing_transactions_consolidated.csv",
+#   sep = ";")
+# # 
 # lookup_files %>%
 #   map(~fread(
 #     file = paste0(lookup_dir, .)
@@ -52,7 +72,9 @@ lookup_files <- dir(lookup_dir)
 ```
 
 ```{r}
+db <- DBI::dbConnect(RPostgreSQL::PostgreSQL(), dbname = "datathon")
 db <- src_postgres(dbname = "datathon")
+# db_src <- src_dbi(db)
 db_tables <- src_tbls(db)
 
 db_tables %>% 
@@ -88,14 +110,17 @@ atc_local %>%
 
 
 ```{r}
-# transactions %>% 
-#   left_join(drugs, 
+# transactions %>%
+#   left_join(drugs,
 #             by = c("Drug_Code" = "MasterProductCode")) %>%
-#   left_join(atc) %>% 
-#   semi_join(atc_antibiotics, copy = TRUE) %>% 
-#   collect(n = Inf) -> 
+#   left_join(atc) %>%
+#   semi_join(atc_antibiotics, copy = TRUE) %>%
+#   collect(n = Inf) ->
 #   antibiotic_transactions
+# 
+# write_feather(antibiotic_transactions, "../data/antibiotic_transactions.feather")
 antibiotic_transactions <- read_feather("../data/antibiotic_transactions.feather")
+# fwrite(antibiotic_transactions, "../data/antibiotic_transactions.csv")
 ```
 
 ```{r}
@@ -116,5 +141,217 @@ antibiotic_transactions %>%
   count(Prescriber_ID) %>% 
   count(n) %>% 
   View
+```
+
+```{r}
+antibiotic_transactions %>% 
+  count(FormCode)
+```
+
+```{r}
+antibiotic_transactions %>% 
+  count(ATCLevel3Name) %>% 
+  filter(n > 1e4) -> 
+  top_antibiotics
+```
+  
+```{r}
+antibiotic_transactions %>% 
+  rename(prescription_week = Prescription_Week,
+         dispense_week = Dispense_Week) %>% 
+  mutate_at(c("prescription_week", "dispense_week"), ymd) %>% 
+  semi_join(top_antibiotics) %>% 
+  rename(atc_level_3_name = ATCLevel3Name) ->  
+  top_antibiotic_transactions
+
+tat <- top_antibiotic_transactions %>% 
+  mutate(atc3 = atc_level_3_name)
+```
+
+```{r}
+top_antibiotic_transactions %>%
+  count(dispense_week, atc_level_3_name) %>% 
+  ggplot(aes(x = dispense_week, y = n, colour = atc_level_3_name)) +
+  geom_line()
+```
+```{r}
+top_antibiotic_transactions %>% 
+  count(atc_level_3_name, dispense_week) %>% 
+  group_by(atc_level_3_name) %>% 
+  mutate(rn = roll_mean(n, n = 4L, fill = 0, align = "center", na.rm = T)) %>% 
+  ggplot(aes(x = dispense_week, y = rn, colour = atc_level_3_name)) +
+  geom_line()
+```
+
+```{r}
+any_matching <- function(v, x) {
+  map(x, ~str_detect(tolower(v), .)) %>% 
+    reduce(`|`) %>% 
+    return()
+}
+
+top_antibiotic_transactions %>% 
+  filter(atc_level_3_name %>%
+           any_matching(c("penic", "macrolides"))) %>%
+  filter(prescription_week %>% 
+           between(
+             ymd("2011-01-01"),
+             ymd("2015-12-31")
+           )
+         ) %>% 
+  count(atc_level_3_name, prescription_week) %>% 
+  group_by(atc_level_3_name) %>% 
+  mutate(rn = roll_mean(n, n = 4L, fill = 0, align = "center", na.rm = T)) %>% 
+  ggplot(aes(x = prescription_week, y = rn, colour = atc_level_3_name)) +
+  geom_line()
+```
+```{r}
+tat %>%
+  count(prescription_week) %>% 
+  ungroup %>% 
+  arrange(prescription_week) %>% 
+  mutate(pwdiff = prescription_week - lag(prescription_week)) %>% 
+  View
+```
+
+
+```{r}
+tat %>% 
+  count(RepeatsLeft_Qty, atc3) %>% 
+  View
+```
+
+```{r}
+tat %>% 
+  select(Patient_ID,
+         Prescriber_ID,
+         prescription_week,
+         dispense_week,
+         RepeatsTotal_Qty,
+         Dispensed_Qty,
+         RepeatsLeft_Qty,
+         atc3,
+         ATCLevel5Name) %>% 
+  arrange(Patient_ID, prescription_week, dispense_week) %>% 
+  View
+  
+```
+
+```{r}
+tat %>% 
+  count(atc_level_3_name, ATCLevel4Name, ATCLevel5Name) %>% 
+  group_by(atc_level_3_name) %>% 
+  mutate(level_3_count = sum(n)) %>% 
+  ungroup %>% 
+  arrange(level_3_count %>% desc, n %>% desc) %>% 
+  View
+```
+
+
+```{r}
+tat %>% 
+  count(atc_level_3_name, RepeatsTotal_Qty) %>% 
+  filter(RepeatsTotal_Qty < 10) %>% 
+  mutate_at("RepeatsTotal_Qty", . %>% as.numeric %>% as.factor) %>% 
+  ggplot(aes(x = atc_level_3_name, fill = RepeatsTotal_Qty, y = n)) +
+  geom_col(postition = "dodge") +
+  coord_flip()
+```
+
+```{r}
+tat %>% 
+  count(ATCLevel5Name, NHS_Code) %>% 
+  ungroup %>% 
+  arrange(n %>% desc) %>% 
+  filter(!is.na(NHS_Code)) %>% 
+  slice(1:50) -> 
+  ab_most_prescribed
+```
+
+```{r}
+tat %>% 
+  semi_join(ab_most_prescribed) %>% 
+  count(atc_level_3_name, NHS_Code, RepeatsTotal_Qty) -> 
+  repeat_numbers
+```
+```{r}
+repeat_numbers %>% 
+  filter(RepeatsTotal_Qty <= 10) %>% 
+  group_by(NHS_Code) %>% 
+  mutate(frac = n / sum(n)) %>% 
+  ggplot(aes(y = NHS_Code, x = RepeatsTotal_Qty, fill = frac)) +
+  geom_tile() +
+  scale_x_discrete()
+```
+
+```{r}
+tat %>% 
+  count(ATCLevel5Name) %>% 
+  View
+```
+
+```{r}
+tat %>% 
+  filter(prescription_week %>% 
+           between(
+             ymd("2011-01-01"),
+             ymd("2015-12-31")
+           )
+  ) %>% 
+  semi_join(
+    (.) %>% 
+      count(ATCLevel5Name) %>% 
+      ungroup %>% 
+      arrange(n %>% desc) %>% 
+      slice(1:20)
+  ) %>% 
+  count(prescription_week, ATCLevel5Name) %>% 
+  group_by(ATCLevel5Name) %>% 
+  mutate(frac = n / sum(n)) %>% 
+  ggplot(aes(x = prescription_week, colour = ATCLevel5Name, y = frac)) +
+  geom_line() +
+  facet_wrap(~ATCLevel5Name)
+```
+
+```{r}
+tat %>% 
+  count(Prescriber_ID, ATCLevel5Name) %>% 
+  ungroup %>% 
+  filter(n < 25) %>% 
+  ggplot(aes(x = n, colour = ATCLevel5Name)) +
+  geom_density()
+```
+
+
+```{r}
+tat %>% 
+  filter(dispense_week %>% 
+           between(
+             ymd("2011-01-01"),
+             ymd("2015-12-31")
+           )
+  ) %>% 
+  semi_join(
+    (.) %>% 
+      count(ATCLevel5Name) %>% 
+      ungroup %>% 
+      arrange(n %>% desc) %>% 
+      slice(1:20)
+  ) %>% 
+  count(dispense_week, ATCLevel5Name) %>% 
+  group_by(ATCLevel5Name) %>% 
+  mutate(frac = n / sum(n)) %>% 
+  ggplot(aes(x = dispense_week, colour = ATCLevel5Name, y = frac)) +
+  geom_line() +
+  facet_wrap(~ATCLevel5Name)
+```
+
+```{r}
+tat %>% 
+  count(Prescriber_ID) %>%
+  ungroup %>% 
+  count(n) %>% 
+  View
+
 ```
 

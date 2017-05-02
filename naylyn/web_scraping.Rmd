@@ -1,0 +1,75 @@
+---
+title: "web scraping"
+author: "A&DS"
+date: "30 April 2017"
+output: html_document
+---
+
+```{r}
+library(rvest)
+library(tidyverse)
+library(glue)
+```
+
+```{r}
+drug_url <- "http://www.pbs.gov.au/medicine/item/1889K"
+
+drug <- read_html(drug_url)
+```
+
+```{r}
+get_pbs_details <- function(nhs_code) {
+  base_url <- "http://www.pbs.gov.au/medicine/item/{nhs_code}"
+  glue(base_url) %>% 
+    as.character %>% 
+    read_html %>% 
+    html_nodes(".align-top+ .align-top , .align-left+ .align-top") %>% 
+    html_text %>% 
+    .[1:6] %>% 
+    c(nhs_code) %>% 
+    return()
+}
+
+safe_get_pbs_details <- safely(get_pbs_details)
+
+tat %>% 
+  distinct(NHS_Code) %>% 
+  filter(!is.na(NHS_Code)) %>%
+  .[[1]] %>% 
+  map(safe_get_pbs_details) -> 
+  output
+```
+
+```{r}
+output %>% 
+  keep(~is.null(.$error)) %>%
+  keep(~length(.$result) > 1) %>% 
+  map("result") %>% 
+  map(~.[1:7]) %>% 
+  map_df(. %>%
+           matrix(byrow = T, nrow = 1) %>% 
+           as_tibble) %>% 
+  set_colnames(
+    c("max_packs",
+      "max_units",
+      "max_repeats",
+      "DPMQ",
+      "max_safety_net",
+      "max_price_to_customer",
+      "NHS_Code")
+  ) %>% 
+  mutate(max_dispenses = as.numeric(max_repeats) + 1) -> 
+  pbs_details
+```
+
+```{r}
+get_pbs_details("2707L")
+```
+
+```{r}
+tat %>% 
+  left_join(pbs_details) %>% 
+  count(NHS_Code, RepeatsTotal_Qty, max_dispenses, ATCLevel5Name) %>% 
+  View
+```
+
