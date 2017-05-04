@@ -1,5 +1,5 @@
 ---
-title: "Untitled"
+title: "Antibiotic Prescribing Scorecard"
 output: 
   flexdashboard::flex_dashboard:
     orientation: rows
@@ -7,30 +7,107 @@ output:
 
 ```{r setup, include=FALSE}
 library(flexdashboard)
+library(tidyverse)
+library(RColorBrewer)
+load("C:/Users/naylyn.gaffney/Documents/learning/datathon_2017/prescriber_percentiles.RData")
+
+prescriber_percentiles$season %>%
+  sample_n(1) %>% 
+  .$Prescriber_ID -> 
+  chosen_prescriber
+
+assign_colour <- function(n){
+  colours <- colorRampPalette(brewer.pal(11,"RdYlGn"))(101)
+  return(colours[n + 1])
+}
 ```
 
 Row
 -----------------------------------------------------------------------
 
-### Articles per Day
+### Prescriber ID
 
 ```{r}
-articles <- 6
-valueBox(articles, icon = "fa-pencil")
+valueBox(chosen_prescriber)
 ```
 
-### Comments per Day
+Row
+-----------------------------------------------------------------------
+
+### Total Prescriptions
 
 ```{r}
-comments <- 10
-valueBox(comments, icon = "fa-comments")
+prescriber_percentiles$total_frac %>% 
+  filter(Prescriber_ID == chosen_prescriber) %>% 
+  .$percentile -> 
+  total_percentile
+
+valueBox(100 - total_percentile,
+         icon = "fa-users",
+         color = assign_colour(100 - total_percentile))
 ```
 
-### Spam per Day
+###
 
 ```{r}
-spam <- 15
-valueBox(spam, 
-         icon = "fa-trash",
-         color = ifelse(spam > 10, "warning", "primary"))
+gauge(100 - total_percentile, min = 0, max = 100, gaugeSectors(
+  success = c(80, 100), warning = c(40, 79), danger = c(0, 39)
+))
 ```
+
+Row
+-----------------------------------------------------------------------
+
+### Winter Antibiotic Prescriptions
+
+```{r}
+prescriber_percentiles$season %>% 
+  filter(Prescriber_ID == chosen_prescriber) %>% 
+  .$percentile -> 
+  season_percentile
+
+valueBox(100 - season_percentile,
+         icon = "fa-calendar",
+         color = assign_colour(100 - season_percentile))
+```
+
+###
+
+```{r}
+gauge(100 - season_percentile, min = 0, max = 100, gaugeSectors(
+  success = c(80, 100), warning = c(40, 79), danger = c(0, 39)
+))
+```
+
+Row
+-----------------------------------------------------------------------
+
+### Treatment Duration
+
+```{r}
+prescriber_percentiles$max_repeats %>% 
+  filter(Prescriber_ID == chosen_prescriber) %>% 
+  .$percentile -> 
+  max_repeats_percentile
+
+valueBox(100 - max_repeats_percentile,
+         icon = "fa-clock-o",
+         color = assign_colour(100 - max_repeats_percentile))
+```
+
+###
+
+```{r}
+gauge(100 - max_repeats_percentile, min = 0, max = 100, gaugeSectors(
+  success = c(80, 100), warning = c(40, 79), danger = c(0, 39)
+))
+```
+
+Row
+-----------------------------------------------------------------------
+
+* Scores are out of 100, which higher being better. All numbers are in comparison to other doctors.
+
+* Total prescriptions represents the total number of antibiotics prescribed.
+* Winter antibiotic prescriptions represents the ratio of winter to summer prescriptions of antibiotics which are frequently inappropriately prescribed for upper respitory tract infeactions.
+* Treatment duration represents the number of prescriptions which are given with the maximum PBS repeats.

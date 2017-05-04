@@ -93,11 +93,17 @@ top_prescribers %>%
   mutate(frac_ab = ab_p / p) -> 
   prescriber_summary
 
+get_density_df <- function(v, n){
+  v %>% 
+    density(n = n) %>% 
+    tidy %>%
+    return()
+}
+
 prescriber_summary %>%
   # mutate_at("frac_ab", log10) %>% 
   .$frac_ab %>% 
-  density(n = 2^13) %>% 
-  tidy -> 
+  get_density_df(n = 2^13) -> 
   antibiotic_density
 
 antibiotic_density %>% 
@@ -130,6 +136,7 @@ get_percentiles <- function(v){
                     cutoff_upper = Inf)) %>% 
   return()
 }
+
 prescriber_summary$frac_ab %>% 
   get_percentiles -> 
   frac_ab_percentiles
@@ -173,6 +180,226 @@ antibiotic_density %>%
 ```{r}
 antibiotic_transactions %>% 
   filter(ATCLevel1Code == "J") %>% 
-  mutate(is_winter_prescription)
+  mutate(is_winter_prescription = month(Prescription_Week) %in% c(6, 7, 8)) %>% 
+  count(ATCLevel5Name, is_winter_prescription) %>% 
+  filter(n > 1e4) %>% 
+  View
+```
+
+```{r}
+urti_ab <- c(
+    "AMOXICILLIN",
+    "AMOXICILLIN AND ENZYME INHIBITOR",
+    "ROXITHROMYCIN"
+  )
+```
+
+```{r}
+antibiotic_transactions %>% 
+  count(ATCLevel3Name) %>% 
+  filter(n > 1e4) -> 
+  top_antibiotics
+
+antibiotic_transactions %>% 
+  rename(prescription_week = Prescription_Week,
+         dispense_week = Dispense_Week) %>% 
+  mutate_at(c("prescription_week", "dispense_week"), ymd) %>% 
+  semi_join(top_antibiotics) %>% 
+  rename(atc_level_3_name = ATCLevel3Name) ->  
+  top_antibiotic_transactions
+
+tat <- top_antibiotic_transactions %>% 
+  mutate(atc3 = atc_level_3_name)
+```
+
+```{r}
+tat %>% 
+  filter(prescription_week %>% 
+           between(
+             ymd("2011-01-01"),
+             ymd("2015-12-31")
+           )
+  ) %>% 
+  filter(ATCLevel5Name %in% urti_ab) %>% 
+  count(prescription_week, ATCLevel5Name) %>% 
+  group_by(ATCLevel5Name) %>% 
+  mutate(frac = n / sum(n)) %>% 
+  ggplot(aes(x = prescription_week, colour = ATCLevel5Name, y = frac)) +
+  geom_smooth(span = 0.1, se = F) +
+  labs(
+    x = "Prescription Week",
+    y = "Prescription Rate"
+  ) +
+  scale_y_continuous(breaks = NULL)
+```
+
+```{r}
+tat %>% 
+  filter(prescription_week %>% 
+           between(
+             ymd("2011-01-01"),
+             ymd("2015-12-31")
+           )
+  ) %>% 
+  filter(ATCLevel5Name %in% urti_ab) %>% 
+  mutate(is_winter = {month(prescription_week) %in% c(6, 7, 6)} %>% 
+           factor(labels = c("not_winter", "winter"))) %>% 
+  count(Prescriber_ID, is_winter) %>% 
+  ungroup %>% 
+  filter(!Prescriber_ID %in% c(0, -9999)) %>% 
+  spread(is_winter, n) %>%
+  filter({not_winter + winter} > 20) %>% 
+  mutate(winter_ratio = winter / (winter + not_winter)) -> 
+  season_ratios
+```
+
+```{r}
+combine_density_percentiles <- function(d, p) {
+  d %>% 
+    mutate(dummy = TRUE) %>% 
+  left_join(p %>% 
+              mutate(dummy = TRUE)) %>% 
+  select(-dummy) %>% 
+  filter(x %>% between(cutoff_lower, cutoff_upper)) %>% 
+  return()
+}
+
+season_ratios$winter_ratio %>% 
+  get_density_df(n = 2^12) -> 
+  season_density
+
+season_ratios$winter_ratio %>% 
+  get_percentiles -> 
+  winter_ratio_percentiles
+
+combine_density_percentiles(season_density,
+                            winter_ratio_percentiles) %>%  
+  ggplot(aes(x = x, y = y)) +
+  geom_rect(
+    aes(
+      xmin = cutoff_lower,
+      xmax = cutoff_upper,
+      ymin = -Inf,
+      ymax = Inf,
+      fill = percentile
+  )) +
+  geom_line() +
+  scale_y_continuous(labels = NULL) +
+  theme(axis.ticks.y = element_blank()) +
+  labs(
+    x = "Winter Prescription Fraction",
+    y = "Empirical Density"
+  ) +
+  theme(axis.line = element_line(colour = "black"),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.border = element_blank(),
+    panel.background = element_blank()) +
+  scale_fill_distiller(palette = "RdYlGn")
+```
+
+```{r}
+tat %>% 
+  inner_join(pbs_details) %>% 
+  mutate(is_max_repeat = {max_dispenses >= RepeatsTotal_Qty} %>% 
+           factor(label = c("not_max", "max"))) %>%
+  count(Prescriber_ID, is_max_repeat) %>% 
+  ungroup %>% 
+  filter(!Prescriber_ID %in% c(0, -9999)) %>% 
+  spread(is_max_repeat, n) %>% 
+  filter({not_max + max} > 20) %>% 
+  mutate(ratio = max / (max + not_max))  -> 
+  max_repeats
+```
+
+```{r}
+max_repeats$ratio %>% 
+  get_density_df(n = 2^13) -> 
+  max_repeat_density
+
+max_repeats$ratio %>% 
+  get_percentiles -> 
+  max_repeat_percentiles
+
+combine_density_percentiles(max_repeat_density,
+                            max_repeat_percentiles) %>%  
+  ggplot(aes(x = x, y = y)) +
+  geom_rect(
+    aes(
+      xmin = cutoff_lower,
+      xmax = cutoff_upper,
+      ymin = -Inf,
+      ymax = Inf,
+      fill = percentile
+  )) +
+  geom_line() +
+  scale_y_continuous(labels = NULL) +
+  theme(axis.ticks.y = element_blank()) +
+  labs(
+    x = "Max Repeat Fraction",
+    y = "Empirical Density"
+  ) +
+  theme(axis.line = element_line(colour = "black"),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.border = element_blank(),
+    panel.background = element_blank()) +
+  scale_fill_distiller(palette = "RdYlGn")
+```
+
+```{r}
+max_repeats
+max_repeat_percentiles
+
+season_ratios
+winter_ratio_percentiles
+
+prescriber_summary
+frac_ab_percentiles
+
+prescribers <- list(
+  season = season_ratios %>% 
+  transmute(
+    Prescriber_ID,
+    measure = winter_ratio
+  ),
+  max_repeats = max_repeats %>% 
+    transmute(
+      Prescriber_ID,
+      measure = ratio
+    ),
+  total_frac = prescriber_summary %>% 
+    transmute(
+      Prescriber_ID,
+      measure = frac_ab
+    )
+)
+
+percentiles <- list(
+  season = winter_ratio_percentiles,
+  max_repeats = max_repeat_percentiles,
+  total_frac = frac_ab_percentiles
+)
+```
+
+```{r}
+assign_prescriber_percentiles <- function(m, p) {
+  m %>% 
+    mutate(dummy = TRUE) %>% 
+    left_join(p %>% 
+                mutate(dummy = TRUE)) %>% 
+    select(-dummy) %>%
+    filter(measure %>% between(cutoff_lower, cutoff_upper)) %>% 
+    return()
+}
+```
+
+```{r}
+prescriber_percentiles <- map2(
+  .x = prescribers,
+  .y = percentiles,
+  .f = assign_prescriber_percentiles
+)
+save(prescriber_percentiles, file = "./prescriber_percentiles.RData")
 ```
 
